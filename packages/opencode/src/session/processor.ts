@@ -15,6 +15,7 @@ import { Config } from "@/config/config"
 import { SessionCompaction } from "./compaction"
 import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
+import { Token } from "@/util/token"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -34,6 +35,7 @@ export namespace SessionProcessor {
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    let accumulatedToolTokens = 0
 
     const result = {
       get message() {
@@ -190,18 +192,20 @@ export namespace SessionProcessor {
 
                     delete toolcalls[value.toolCallId]
 
-                    // Mid-turn compaction check
-                    // Check after each tool result to prevent context overflow during turn
-                    if (
-                      !needsCompaction &&
-                      input.assistantMessage.tokens &&
-                      (await SessionCompaction.isOverflow({
-                        tokens: input.assistantMessage.tokens,
-                        model: input.model,
-                      }))
-                    ) {
-                      log.info("mid-turn compaction triggered after tool-result")
-                      needsCompaction = true
+                    // Accumulate tool output tokens for mid-turn overflow detection
+                    const outputTokens = Token.estimate(value.output.output)
+                    accumulatedToolTokens += outputTokens
+
+                    // Mid-turn compaction check with accumulated tokens
+                    if (!needsCompaction && input.assistantMessage.tokens) {
+                      const estimatedTokens = {
+                        ...input.assistantMessage.tokens,
+                        input: input.assistantMessage.tokens.input + accumulatedToolTokens,
+                      }
+                      if (await SessionCompaction.isOverflow({ tokens: estimatedTokens, model: input.model })) {
+                        log.info("mid-turn compaction triggered", { accumulatedToolTokens })
+                        needsCompaction = true
+                      }
                     }
                   }
                   break

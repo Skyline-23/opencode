@@ -189,6 +189,20 @@ export namespace SessionProcessor {
                     })
 
                     delete toolcalls[value.toolCallId]
+
+                    // Mid-turn compaction check
+                    // Check after each tool result to prevent context overflow during turn
+                    if (
+                      !needsCompaction &&
+                      input.assistantMessage.tokens &&
+                      (await SessionCompaction.isOverflow({
+                        tokens: input.assistantMessage.tokens,
+                        model: input.model,
+                      }))
+                    ) {
+                      log.info("mid-turn compaction triggered after tool-result")
+                      needsCompaction = true
+                    }
                   }
                   break
                 }
